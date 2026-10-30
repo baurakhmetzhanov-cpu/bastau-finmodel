@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bastau-project.kz/schema/finmodel/project.schema.json",
+  "title": "Финансовая модель проекта (объект Project)",
+  "description": "Контракт данных между интерфейсом, расчётным модулем (js/engine.js) и СЭД. Доли и ставки – десятичные дроби (0.3 = 30%). Суммы – тенге с НДС, если не указано иное.",
+  "type": "object",
+  "required": ["id", "name", "owner", "status", "version", "startYear", "startMonth", "term", "contract", "tmcShare", "adv", "offset", "retention", "payLag", "schedule", "costs", "overhead", "amort", "bg"],
+  "properties": {
+    "id": { "type": "string", "description": "Идентификатор проекта; в СЭД – код проекта / ЦФО из справочника" },
+    "name": { "type": "string", "minLength": 1 },
+    "customer": { "type": "string", "description": "Заказчик; в СЭД – ссылка на контрагента (БИН)" },
+    "contractNo": { "type": "string" },
+    "owner": { "type": "string", "description": "Руководитель проекта; в СЭД – идентификатор пользователя" },
+    "status": { "enum": ["draft", "review", "rework", "fd", "bk", "approved", "budget", "rejected"] },
+    "version": { "type": "integer", "minimum": 1 },
+    "startYear": { "type": "integer", "minimum": 2020, "maximum": 2100 },
+    "startMonth": { "type": "integer", "minimum": 1, "maximum": 12 },
+    "term": { "type": "integer", "minimum": 1, "maximum": 24, "description": "Срок выполнения работ, мес." },
+    "contract": { "type": "number", "minimum": 0, "description": "Договорная сумма с НДС" },
+    "tmcShare": { "$ref": "#/$defs/share", "description": "Доля поставки ТМЦ в выручке (код 1100), остальное – СМР / услуги (1200)" },
+    "adv": {
+      "type": "object",
+      "required": ["base", "pct", "month"],
+      "properties": {
+        "base": { "enum": ["contractVat", "contractNet", "year", "fixed"] },
+        "pct": { "$ref": "#/$defs/share" },
+        "yearAmount": { "type": "number", "minimum": 0, "description": "Сумма договора на финансовый год (для base = year)" },
+        "fixed": { "type": "number", "minimum": 0, "description": "Фиксированная сумма аванса (для base = fixed)" },
+        "month": { "type": "integer", "minimum": 1, "maximum": 36 }
+      }
+    },
+    "offset": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["prop", "fixed"], "description": "prop – пропорционально (аванс / договор); fixed – фиксированный % от акта до погашения" },
+        "pct": { "$ref": "#/$defs/share" }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "properties": { "pct": { "$ref": "#/$defs/share" }, "returnLag": { "type": "integer", "minimum": 0, "maximum": 24 } }
+    },
+    "payLag": { "type": "integer", "minimum": 0, "maximum": 12, "description": "Отсрочка оплаты актов заказчиком, мес." },
+    "schedule": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {
+        "profile": { "enum": ["uniform", "scurve", "manual"] },
+        "manual": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 36, "maxItems": 36, "description": "Доли по месяцам проекта, сумма = 1" }
+      }
+    },
+    "costs": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "description": "Порядок фиксирован: 2100 материалы и оборудование, 2200 субподряд, 2300 спецтехника, 2400 логистика и прочие прямые",
+      "items": {
+        "type": "object",
+        "required": ["pct", "vat", "prepay", "lead", "lag"],
+        "properties": {
+          "pct": { "type": "number", "minimum": 0, "maximum": 1.5, "description": "% от выручки без НДС" },
+          "vat": { "type": "boolean" },
+          "holding": { "$ref": "#/$defs/share", "description": "Доля закупок внутри группы" },
+          "prepay": { "$ref": "#/$defs/share", "description": "Аванс поставщику" },
+          "lead": { "type": "integer", "minimum": 0, "maximum": 6, "description": "За сколько месяцев до поставки платится аванс" },
+          "lag": { "type": "integer", "minimum": 0, "maximum": 12, "description": "Отсрочка оплаты остатка, мес." },
+          "fx": { "$ref": "#/$defs/share", "description": "Валютная доля закупки" }
+        }
+      }
+    },
+    "overhead": {
+      "type": "object",
+      "properties": { "pct": { "$ref": "#/$defs/share" }, "vatShare": { "$ref": "#/$defs/share" } }
+    },
+    "amort": { "type": "number", "minimum": 0 },
+    "bg": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["type", "req", "base", "pct", "rate", "cover"],
+        "properties": {
+          "type": { "enum": ["advance", "perf", "warranty"] },
+          "req": { "type": "boolean" },
+          "base": { "enum": ["advance", "contractVat", "contractNet", "manual"] },
+          "pct": { "type": "number", "minimum": 0, "maximum": 1 },
+          "manual": { "type": "number", "minimum": 0 },
+          "issue": { "type": ["integer", "null"], "minimum": 1, "maximum": 36, "description": "null – по умолчанию" },
+          "term": { "type": ["integer", "null"], "minimum": 1, "maximum": 36, "description": "null – по умолчанию" },
+          "rate": { "type": "number", "minimum": 0, "maximum": 0.2, "description": "Комиссия банка, % годовых" },
+          "cover": { "$ref": "#/$defs/share", "description": "Денежное покрытие, % от суммы гарантии" }
+        }
+      }
+    },
+    "financingSource": { "type": "string", "description": "Источник покрытия кассового разрыва" },
+    "approved": {
+      "type": ["object", "null"],
+      "properties": { "version": { "type": "integer" }, "ts": { "type": "string" }, "netMargin": { "type": "number" }, "need": { "type": "number" } }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "user", "role", "action"],
+        "properties": {
+          "ts": { "type": "string" }, "user": { "type": "string" }, "role": { "enum": ["rp", "peo", "fd", "gd", "tr"] },
+          "action": { "type": "string" }, "from": { "type": "string" }, "to": { "type": "string" }, "comment": { "type": "string" }
+        }
+      }
+    },
+    "versions": {
+      "type": "array",
+      "items": { "type": "object", "required": ["version", "ts", "data"], "properties": { "version": { "type": "integer" }, "ts": { "type": "string" }, "data": { "type": "object" } } }
+    }
+  },
+  "$defs": {
+    "share": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Финансовая модель проекта</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="brand-title">Финансовая модель проекта</div>
+    <div class="brand-sub">ТОО «Bastau Project» · прототип</div>
+  </div>
+  <nav class="nav" id="nav">
+    <button data-view="registry">Реестр проектов</button>
+    <button data-view="portfolio">Портфель и бюджет</button>
+    <button data-view="params">Параметры</button>
+    <button data-view="about">О прототипе</button>
+  </nav>
+  <div class="who">
+    <span class="demo-badge" title="Вход и права в рабочей версии – через СЭД">Демо-режим</span>
+    <label>Роль
+      <select id="roleSel"></select>
+    </label>
+    <label>Пользователь
+      <select id="userSel"></select>
+    </label>
+  </div>
+</header>
+<main id="app"></main>
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <p id="modalText" class="muted"></p>
+    <label class="full">Комментарий
+      <textarea id="modalComment" rows="3"></textarea>
+    </label>
+    <div class="modal-actions">
+      <button id="modalCancel" class="btn ghost">Отмена</button>
+      <button id="modalOk" class="btn primary">Подтвердить</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
