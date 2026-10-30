@@ -6,7 +6,15 @@
   var S = { role: "rp", user: ST.USERS.rp[0], view: "registry", id: null, tab: "contract", scen: "base", onlyBudget: true, filter: "all" };
   var charts = [];
   var app = document.getElementById("app");
-  if (window.Chart) { Chart.defaults.animation = false; Chart.defaults.font.family = "Segoe UI, Calibri, Arial, sans-serif"; }
+  if (window.Chart) {
+    Chart.defaults.animation = false; Chart.defaults.font.family = "'Segoe UI Variable Text', 'Segoe UI', system-ui, Arial, sans-serif";
+    Chart.defaults.color = "#5F6B7D"; Chart.defaults.borderColor = "#E3E7ED";
+  }
+  // высота шапки – для сводки, которая «прилипает» под ней
+  var topBar = document.querySelector(".top");
+  function syncTopH() { document.documentElement.style.setProperty("--top-h", topBar.offsetHeight + "px"); }
+  window.addEventListener("resize", syncTopH);
+  syncTopH();
 
   var SCEN = { base: "Базовый", pess: "Пессимистичный", opt: "Оптимистичный" };
   var ADV_BASE = { contractVat: "% от договорной суммы с НДС", contractNet: "% от договорной суммы без НДС", year: "% от суммы на финансовый год", fixed: "Фиксированная сумма" };
@@ -15,6 +23,10 @@
   var BG_BASE = { advance: "Сумма аванса", contractVat: "Договор с НДС", contractNet: "Договор без НДС", manual: "Ручной ввод" };
   var BG_NAMES = { advance: "На возврат аванса", perf: "На исполнение договора", warranty: "На гарантийный период" };
   var MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  // вкладки карточки: первые четыре – ввод данных, остальные – результаты
+  var TABS = [["contract", "1. Договор и оплата"], ["schedule", "2. График"], ["costs", "3. Себестоимость"], ["bg", "4. Гарантии"],
+    ["result", "5. Результат"], ["cash", "6. Денежный поток"], ["scen", "7. Сценарии"], ["history", "8. Журнал"]];
+  var N_INPUT_TABS = 4;
 
   var TRANSITIONS = [
     { key: "submit", role: "rp", from: ["draft", "rework"], to: "review", label: "Отправить на проверку ПЭО", cls: "primary", owner: true },
@@ -54,6 +66,39 @@
   function canEdit(p) { return S.role === "rp" && p.owner === S.user && (p.status === "draft" || p.status === "rework"); }
   function canEditParams() { return S.role === "peo" || S.role === "fd"; }
 
+  // обязательные поля для отправки на проверку ПЭО (п. 5.3 ТЗ)
+  function submitChecks(p) {
+    var sh = E.scheduleShares(p).reduce(function (a, b) { return a + b; }, 0);
+    return [
+      { label: "Наименование", ok: !!String(p.name || "").trim(), tab: "contract" },
+      { label: "Заказчик", ok: !!String(p.customer || "").trim(), tab: "contract" },
+      { label: "Сумма договора", ok: p.contract > 0, tab: "contract" },
+      { label: "График: сумма долей 100%", ok: Math.abs(sh - 1) <= 0.0001, tab: "schedule" }
+    ];
+  }
+  // почему карточка открыта только на просмотр
+  function lockReason(p) {
+    if (S.role === "rp") {
+      if (p.status === "approved" || p.status === "budget") return "Проект утверждён, данные зафиксированы. Чтобы изменить их, нажмите «Начать корректировку (новая версия)».";
+      if (p.status === "rejected") return "Проект отклонён, редактирование закрыто.";
+      return "Проект на согласовании (статус «" + ST.STATUSES[p.status] + "»). Редактирование откроется, если проект вернут на доработку.";
+    }
+    var tail = {
+      peo: "Ваша роль – проверить модель и передать её финансовому директору или вернуть на доработку.",
+      fd: "Ваша роль – утвердить проект, вынести его на Бюджетный комитет или вернуть на доработку.",
+      gd: "Ваша роль – решение по проектам, вынесенным на Бюджетный комитет.",
+      tr: "Казначейство видит модель для контроля платежей."
+    }[S.role] || "";
+    return "Данные вводит руководитель проекта (" + p.owner + ") в статусах «Черновик» и «На доработке». " + tail;
+  }
+  function modeBanner(p, ed) {
+    if (!ed) return '<div class="mode view"><b>Только просмотр</b><div>' + esc(lockReason(p)) + "</div></div>";
+    var ch = submitChecks(p), left = ch.some(function (c) { return !c.ok; });
+    return '<div class="mode edit"><b>Режим ввода</b><div>Заполните вкладки 1–4 по порядку, показатели пересчитываются сразу. ' +
+      (left ? "Для отправки на проверку ПЭО осталось заполнить:" : "Обязательное заполнено – можно отправлять на проверку ПЭО.") +
+      '<div class="checks">' + ch.map(function (c) { return '<span class="check ' + (c.ok ? "ok" : "no") + '" data-tab="' + c.tab + '">' + esc(c.label) + "</span>"; }).join("") + "</div></div></div>";
+  }
+
   // ------------------------------------------------------------ модальное окно
   var modalOk = null;
   function openModal(title, text, onOk, okLabel) {
@@ -78,52 +123,101 @@
   document.getElementById("nav").onclick = function (e) { var b = e.target.closest("button[data-view]"); if (!b) return; S.view = b.dataset.view; render(); };
 
   // ------------------------------------------------------------ поля ввода
+  // intsel – выпадающий список с целыми значениями (месяц, срок)
   function field(p, label, path, type, opts, editable, hint) {
     var v = getPath(p, path), dis = editable ? "" : " disabled", inner;
-    if (type === "select") {
-      inner = '<select data-path="' + path + '" data-type="select"' + dis + ">" + Object.keys(opts).map(function (k) { return '<option value="' + k + '"' + (String(v) === k ? " selected" : "") + ">" + esc(opts[k]) + "</option>"; }).join("") + "</select>";
+    if (type === "select" || type === "intsel") {
+      inner = '<select data-path="' + path + '" data-type="' + (type === "intsel" ? "int" : "select") + '"' + dis + ">" + Object.keys(opts).map(function (k) { return '<option value="' + k + '"' + (String(v) === k ? " selected" : "") + ">" + esc(opts[k]) + "</option>"; }).join("") + "</select>";
     } else {
-      var shown = type === "pct" ? (v * 100).toString().replace(".", ",") : (type === "money" ? fmt(v) : esc(v));
-      inner = '<input data-path="' + path + '" data-type="' + type + '" value="' + shown + '"' + dis + ">";
+      var shown = type === "pct" ? pctStr(v) : (type === "money" ? fmt(v) : esc(v));
+      inner = '<input data-path="' + path + '" data-type="' + type + '" value="' + shown + '"' + (type === "text" ? "" : ' inputmode="decimal"') + dis + ">";
     }
-    return '<label class="fld"><span>' + esc(label) + (type === "pct" ? ", %" : "") + "</span>" + inner + (hint ? '<span class="small muted">' + esc(hint) + "</span>" : "") + "</label>";
+    return '<label class="fld"><span>' + esc(label) + (type === "pct" ? ", %" : "") + "</span>" + inner + (hint ? '<span class="hint">' + esc(hint) + "</span>" : "") + "</label>";
   }
   function calcField(label, value) { return '<div class="fld"><span>' + esc(label) + '</span><div class="calc">' + value + "</div></div>"; }
+  function pctStr(v) { return String(+(v * 100).toFixed(6)).replace(".", ","); }
+  function monthOpts() { var o = {}; MONTHS.forEach(function (m, i) { o[i + 1] = m.charAt(0).toUpperCase() + m.slice(1); }); return o; }
+  function rangeOpts(a, b, label, cur) {
+    var o = {};
+    for (var i = a; i <= b; i++) o[i] = label(i);
+    if (cur !== null && cur !== undefined && !(cur in o)) o[cur] = label(cur);
+    return o;
+  }
+
+  function readInput(el) {
+    var t = el.dataset.type, v = el.value;
+    if (t === "pct") return parseNum(v) / 100;
+    if (t === "money" || t === "num") return parseNum(v);
+    if (t === "int") return Math.round(parseNum(v));
+    if (t === "intnull") return String(v).trim() === "" ? null : Math.round(parseNum(v));
+    if (t === "bool") return v === "1";
+    return v;
+  }
 
   app.addEventListener("change", function (e) {
     var el = e.target, path = el.dataset.path;
     if (!path) return;
-    var t = el.dataset.type, v = el.value;
     var target = el.dataset.scope === "params" ? D.params : proj(S.id);
     if (!target) return;
-    if (t === "pct") v = parseNum(v) / 100;
-    else if (t === "money" || t === "num") v = parseNum(v);
-    else if (t === "int") v = Math.round(parseNum(v));
-    else if (t === "intnull") v = String(v).trim() === "" ? null : Math.round(parseNum(v));
-    else if (t === "bool") v = v === "1";
-    setPath(target, path, v);
+    setPath(target, path, readInput(el));
     save();
+    scheduleRender();
+  });
+
+  // Перерисовка после ввода откладывается: курсор переходит в следующее поле (Tab, клик),
+  // а нажатие кнопки сразу после ввода не теряется.
+  var pointerDown = false, renderPending = false;
+  document.addEventListener("pointerdown", function () { pointerDown = true; }, true);
+  document.addEventListener("pointerup", function () { pointerDown = false; if (renderPending) setTimeout(flushRender, 0); }, true);
+  function scheduleRender() { renderPending = true; if (!pointerDown) setTimeout(flushRender, 0); }
+  function flushRender() {
+    if (!renderPending) return;
+    var a = document.activeElement, sel = null;
+    if (a && a.dataset && a.dataset.path) sel = '[data-path="' + a.dataset.path + '"]' + (a.dataset.scope ? '[data-scope="' + a.dataset.scope + '"]' : "");
+    var y = window.scrollY;
     render();
+    window.scrollTo(0, y);
+    var el = sel && app.querySelector(sel);
+    if (el && !el.disabled) { el.focus({ preventScroll: true }); if (el.tagName === "INPUT") el.select(); }
+  }
+
+  // сводка пересчитывается при наборе, до сохранения поля
+  app.addEventListener("input", function (e) {
+    var el = e.target, path = el.dataset.path, box = document.getElementById("summary"), p = proj(S.id);
+    if (!path || !box || !p || el.dataset.scope === "params") return;
+    var tmp = clone(p);
+    setPath(tmp, path, readInput(el));
+    try { box.innerHTML = summaryHtml(tmp); } catch (err) { /* промежуточное значение при наборе – ждём следующего */ }
   });
 
   // ------------------------------------------------------------ реестр
+  // что проект в текущем статусе ждёт от выбранного пользователя
+  function myAction(p) {
+    if (canEdit(p)) return p.status === "rework" ? "Доработать и отправить" : "Заполнить и отправить";
+    return { "peo:review": "Проверить модель", "fd:fd": "Согласовать", "gd:bk": "Решение БК", "peo:approved": "Включить в бюджет" }[S.role + ":" + p.status] || "";
+  }
+
   function viewRegistry() {
-    var list = visibleProjects().filter(function (p) { return S.filter === "all" || p.status === S.filter; });
-    var html = '<h1>Реестр проектов</h1><p class="muted">' + (S.role === "rp" ? "Показаны ваши проекты. " : "Показаны все проекты. ") +
-      "Суммы – тенге. Показатели – по базовому сценарию.</p>";
-    html += '<div class="toolbar">';
-    if (S.role === "rp") html += '<button class="btn primary" data-act="new">+ Новый проект</button>';
-    html += '<label class="small muted">Статус <select id="flt">' + '<option value="all">Все</option>' + Object.keys(ST.STATUSES).map(function (k) { return '<option value="' + k + '"' + (S.filter === k ? " selected" : "") + ">" + ST.STATUSES[k] + "</option>"; }).join("") + "</select></label>";
-    html += '<span style="flex:1"></span><button class="btn" data-act="exportJson">Экспорт данных (JSON)</button><button class="btn" data-act="importJson">Импорт данных (JSON)</button><button class="btn danger" data-act="reset">Тестовые данные</button></div>';
-    html += '<div class="panel" style="padding:0;overflow-x:auto"><table class="data"><tr><th>Проект</th><th>Заказчик</th><th>Руководитель проекта</th><th>Начало</th><th class="num">Сумма договора</th><th class="num">Чистая рент.</th><th class="num">Кассовый разрыв</th><th>Маршрут</th><th>Статус</th><th class="num">Версия</th></tr>';
-    if (!list.length) html += '<tr><td colspan="10" class="muted">Проектов нет.</td></tr>';
+    var all = visibleProjects(), list = all.filter(function (p) { return S.filter === "all" || p.status === S.filter; });
+    var todo = all.filter(myAction).length;
+    var html = '<div class="page-head"><div><h1>Реестр проектов</h1><p class="muted">' + (S.role === "rp" ? "Ваши проекты. " : "Все проекты. ") +
+      "Суммы – тенге, показатели – по базовому сценарию.</p></div>" + (S.role === "rp" ? '<button class="btn primary" data-act="new">+ Новый проект</button>' : "") + "</div>";
+    if (S.role === "rp") html += '<ol class="howto"><li><b>Создайте проект</b>или откройте свой черновик в таблице</li><li><b>Заполните вкладки 1–4</b>договор, график, себестоимость, гарантии – сводка справа покажет результат</li>' +
+      "<li><b>Отправьте на проверку ПЭО</b>дальше финансовый директор и, если нужно, Бюджетный комитет</li></ol>";
+    else html += '<div class="note">Данные проектов вводит руководитель проекта. Чтобы попробовать ввод в демо-режиме, выберите роль «Руководитель проекта» в шапке справа. ' +
+      "Проекты, которые ждут вашего решения, отмечены в колонке «Ваше действие».</div>";
+    html += '<div class="toolbar"><label class="small muted">Статус <select id="flt">' + '<option value="all">Все</option>' + Object.keys(ST.STATUSES).map(function (k) { return '<option value="' + k + '"' + (S.filter === k ? " selected" : "") + ">" + ST.STATUSES[k] + "</option>"; }).join("") + "</select></label>" +
+      (todo ? '<span class="todo-count">Ждут вашего действия: ' + todo + "</span>" : "") + "</div>";
+    html += '<div class="panel flush"><table class="data"><tr><th>Проект / заказчик</th><th>Руководитель проекта</th><th>Начало</th><th class="num">Сумма договора</th><th class="num">Чистая рент.</th><th class="num">Кассовый разрыв</th><th>Маршрут</th><th>Статус</th><th>Ваше действие</th><th class="num">Версия</th></tr>';
+    if (!list.length) html += '<tr><td colspan="10" class="empty">' + (all.length ? "Нет проектов в статусе «" + esc(ST.STATUSES[S.filter]) + "»." : (S.role === "rp" ? "У вас пока нет проектов. Нажмите «+ Новый проект»." : "Проектов нет.")) + "</td></tr>";
     list.forEach(function (p) {
-      var R = E.calc(p, D.params, "base"), cr = E.committeeRequired(p, D.params);
-      html += "<tr><td><span class=\"link\" data-open=\"" + p.id + "\">" + esc(p.name) + "</span></td><td>" + esc(p.customer) + "</td><td>" + esc(p.owner) + "</td><td>" +
-        calLabel(p, 1) + '</td><td class="num">' + fmt(p.contract) + '</td><td class="num">' + fmtPct(R.netMargin) + '</td><td class="num">' + fmt(R.need) + "</td><td>" +
-        (cr.required ? '<span class="badge st-bk">через БК</span>' : '<span class="badge st-approved">ФД</span>') + "</td><td>" + badge(p.status) + '</td><td class="num">' + p.version + "</td></tr>";
+      var R = E.calc(p, D.params, "base"), cr = E.committeeRequired(p, D.params), act = myAction(p);
+      html += '<tr class="clickable" data-open="' + p.id + '"><td><span class="link">' + esc(p.name) + '</span><div class="sub-line">' + esc(p.customer || "заказчик не указан") + "</div></td><td>" + esc(p.owner) + "</td><td>" +
+        calLabel(p, 1) + '</td><td class="num">' + fmt(p.contract) + '</td><td class="num">' + fmtPct(R.netMargin) + '</td><td class="num">' + (R.need > 0 ? fmt(R.need) : '<span class="na">нет</span>') + "</td><td>" +
+        (cr.required ? '<span class="badge st-bk">через БК</span>' : '<span class="badge st-approved">ФД</span>') + "</td><td>" + badge(p.status) + "</td><td>" + (act ? '<span class="todo">' + act + " →</span>" : "") + '</td><td class="num">' + p.version + "</td></tr>";
     });
     html += "</table></div>";
+    html += '<div class="data-foot"><span>Данные прототипа хранятся в этом браузере.</span><button class="btn ghost sm" data-act="exportJson">Экспорт (JSON)</button><button class="btn ghost sm" data-act="importJson">Импорт (JSON)</button><button class="btn ghost sm" data-act="reset">Вернуть тестовые данные</button></div>';
     html += '<input type="file" id="fileIn" accept=".json,application/json" class="hidden">';
     app.innerHTML = html;
     document.getElementById("flt").onchange = function (e) { S.filter = e.target.value; render(); };
@@ -145,45 +239,88 @@
       html += '<button class="btn ' + t.cls + '" data-tr="' + t.key + '"' + (dis ? ' disabled title="Нужен Бюджетный комитет"' : "") + ">" + esc(t.label) + "</button>";
     });
     if (S.role === "rp" && p.owner === S.user && (p.status === "draft" || p.status === "rework")) html += '<button class="btn" data-act="dup">Копировать проект</button><button class="btn danger" data-act="del">Удалить</button>';
-    if (!acts.length && !ed) html += '<span class="muted small">Просмотр. ' + (S.role === "rp" ? "Редактировать можно свои проекты в статусах «Черновик» и «На доработке»." : "Для вашей роли действий в этом статусе нет.") + "</span>";
+    if (!acts.length && !ed) html += '<span class="muted small">Для вашей роли действий в этом статусе нет.</span>';
     html += "</div>";
+    html += modeBanner(p, ed);
     var pending = ["draft", "rework", "review", "fd", "bk"].indexOf(p.status) >= 0;
     if (cr.required) html += '<div class="note' + (pending ? " warn" : "") + '">' + (pending ? "Требуется рассмотрение Бюджетного комитета: " : "Маршрут через Бюджетный комитет: ") + esc(cr.reasons.join("; ")) + ".</div>";
-    var tabs = { contract: "1. Договор и оплата", schedule: "2. График", costs: "3. Себестоимость", bg: "4. Гарантии", result: "5. Результат", cash: "6. Денежный поток", scen: "7. Сценарии", history: "8. Журнал" };
-    html += '<div class="tabs">' + Object.keys(tabs).map(function (k) { return '<button data-tab="' + k + '" class="' + (S.tab === k ? "active" : "") + '">' + tabs[k] + "</button>"; }).join("") + "</div>";
+    var miss = {};
+    if (ed) submitChecks(p).forEach(function (c) { if (!c.ok) miss[c.tab] = true; });
+    function tabBtn(t) {
+      return '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? "active" : "") + '">' + t[1] + (miss[t[0]] ? '<i class="dot" title="Не заполнены обязательные поля"></i>' : "") + "</button>";
+    }
+    var withSum = TABS.map(function (t) { return t[0]; }).indexOf(S.tab) < N_INPUT_TABS;
+    html += '<div class="card-layout' + (withSum ? " with-sum" : "") + '"><div class="card-main">';
+    html += '<div class="tabs" id="tabs"><div class="tab-group"><span class="tg-label">' + (ed ? "Ввод данных" : "Исходные данные") + '</span><div class="tg-btns">' + TABS.slice(0, N_INPUT_TABS).map(tabBtn).join("") +
+      '</div></div><div class="tab-group out"><span class="tg-label">Результаты</span><div class="tg-btns">' + TABS.slice(N_INPUT_TABS).map(tabBtn).join("") + "</div></div></div>";
     html += '<div id="tabBody">' + ({ contract: tabContract, schedule: tabSchedule, costs: tabCosts, bg: tabBg, result: tabResult, cash: tabCash, scen: tabScen, history: tabHistory }[S.tab])(p, ed, R, cr) + "</div>";
+    // переход к соседним вкладкам внизу страницы
+    var ti = TABS.map(function (t) { return t[0]; }).indexOf(S.tab), prev = TABS[ti - 1], next = TABS[ti + 1];
+    html += '<div class="tab-nav">' + (prev ? '<button class="btn" data-tab="' + prev[0] + '" data-step="1">← ' + prev[1] + "</button>" : "<span></span>") +
+      (next ? '<button class="btn' + (ti < N_INPUT_TABS ? " primary" : "") + '" data-tab="' + next[0] + '" data-step="1">Далее: ' + next[1] + " →</button>" : "") + "</div>";
+    html += "</div>" + (withSum ? '<aside class="summary" id="summary">' + summaryHtml(p) + "</aside>" : "") + "</div>";
     app.innerHTML = html;
     afterProject(p);
   }
 
+  // сводка рядом с вкладками ввода: главное по базовому и пессимистичному сценариям
+  function summaryHtml(p) {
+    var b = E.calc(p, D.params, "base"), s = E.calc(p, D.params, "pess"), cr = E.committeeRequired(p, D.params), thr = D.params.thr;
+    function row(l, v, cls) { return '<div class="sum-row"><span>' + l + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; }
+    function gap(R) { return R.need > 0 ? row("Кассовый разрыв", fmt(R.need), "neg") : row("Кассовый разрыв", "нет", "pos"); }
+    var ok = b.netMargin >= thr, warns = b.checks.slice();
+    if (b.revenue > 0 && b.direct > 0.95 * b.revenue) warns.push("Прямые затраты выше 95% выручки");
+    return '<div class="sum-head"><b>Сводка</b><span class="small muted">пересчёт при вводе</span></div>' +
+      '<div class="sum-verdict ' + (ok ? "ok" : "bad") + '">' + esc(b.verdict) + "</div>" +
+      warns.map(function (w) { return '<div class="sum-warn">' + esc(w) + "</div>"; }).join("") +
+      '<div class="sum-sub">Базовый сценарий</div>' +
+      row("Выручка без НДС", fmt(b.revenue)) + row("Маржинальная прибыль", fmtPct(b.marginPct)) + row("Чистая прибыль", fmt(b.np), b.np < 0 ? "neg" : "") +
+      row("Чистая рентабельность", fmtPct(b.netMargin), ok ? "pos" : "neg") + gap(b) +
+      '<div class="sum-sub">Пессимистичный сценарий</div>' +
+      row("Чистая рентабельность", fmtPct(s.netMargin), s.netMargin >= thr ? "pos" : "neg") + gap(s) +
+      '<div class="sum-note">Порог чистой рентабельности – ' + fmtPct(thr) + "</div>" +
+      '<div class="sum-route ' + (cr.required ? "bk" : "fd") + '"><b>' + (cr.required ? "Маршрут: через Бюджетный комитет" : "Маршрут: утверждает финансовый директор") + "</b>" +
+      (cr.required ? "<span>" + esc(cr.reasons.join("; ")) + "</span>" : "") + "</div>" +
+      '<button class="btn full-w" data-tab="result" data-step="1">Подробно: 5. Результат →</button>';
+  }
+
   function tabContract(p, ed, R) {
     var h = '<div class="panel"><h3>Договор</h3><div class="form">' +
-      field(p, "Наименование проекта", "name", "text", null, ed) + field(p, "Заказчик", "customer", "text", null, ed) + field(p, "Договор №, дата", "contractNo", "text", null, ed) +
-      field(p, "Год начала работ", "startYear", "int", null, ed) + field(p, "Месяц начала работ (1–12)", "startMonth", "int", null, ed) + field(p, "Срок выполнения работ, мес. (1–24)", "term", "int", null, ed) +
-      field(p, "Договорная сумма с НДС, тенге", "contract", "money", null, ed) + calcField("Выручка без НДС", fmt(R.revenue)) + field(p, "Доля поставки ТМЦ в выручке", "tmcShare", "pct", null, ed, "остальное – СМР / услуги") +
-      "</div></div>";
+      field(p, "Наименование проекта *", "name", "text", null, ed) + field(p, "Заказчик *", "customer", "text", null, ed) + field(p, "Договор №, дата", "contractNo", "text", null, ed) +
+      field(p, "Год начала работ", "startYear", "int", null, ed) + field(p, "Месяц начала работ", "startMonth", "intsel", monthOpts(), ed) +
+      field(p, "Срок выполнения работ", "term", "intsel", rangeOpts(1, 24, function (i) { return i + " мес."; }, p.term), ed, "не более 24 месяцев") +
+      field(p, "Договорная сумма с НДС, тенге *", "contract", "money", null, ed) + calcField("Выручка без НДС", fmt(R.revenue)) + field(p, "Доля поставки ТМЦ в выручке", "tmcShare", "pct", null, ed, "остальное – СМР / услуги") +
+      "</div>" + (ed ? '<p class="small muted">* – обязательно для отправки на проверку ПЭО.</p>' : "") + "</div>";
+    // показываются только поля, которые участвуют в расчёте при выбранном способе
+    var ab = p.adv.base, advMonths = rangeOpts(1, Math.max(p.term, 1), function (m) { return m + "-й месяц · " + calLabel(p, m); }, p.adv.month);
     h += '<div class="panel"><h3>Аванс от заказчика</h3><div class="form">' +
-      field(p, "База расчёта аванса", "adv.base", "select", ADV_BASE, ed) + field(p, "Аванс, % от базы", "adv.pct", "pct", null, ed) +
-      field(p, "Сумма на финансовый год, тенге", "adv.yearAmount", "money", null, ed) + field(p, "Фиксированная сумма аванса, тенге", "adv.fixed", "money", null, ed) +
-      field(p, "Месяц получения аванса (от начала проекта)", "adv.month", "int", null, ed) + calcField("Аванс к поступлению", fmt(R.advance) + " (" + fmtPct(R.advShare) + " договора)") +
-      field(p, "Порядок зачёта аванса", "offset.mode", "select", OFFS, ed) + field(p, "Зачёт аванса, % от акта (фиксированный порядок)", "offset.pct", "pct", null, ed) +
+      field(p, "База расчёта аванса", "adv.base", "select", ADV_BASE, ed) +
+      (ab !== "fixed" ? field(p, "Аванс, % от базы", "adv.pct", "pct", null, ed) : "") +
+      (ab === "year" ? field(p, "Сумма на финансовый год, тенге", "adv.yearAmount", "money", null, ed, "аванс = % × сумма на год") : "") +
+      (ab === "fixed" ? field(p, "Фиксированная сумма аванса, тенге", "adv.fixed", "money", null, ed) : "") +
+      field(p, "Месяц получения аванса", "adv.month", "intsel", advMonths, ed, "месяц проекта и календарный месяц") + calcField("Аванс к поступлению", fmt(R.advance) + " (" + fmtPct(R.advShare) + " договора)") +
+      field(p, "Порядок зачёта аванса", "offset.mode", "select", OFFS, ed, p.offset.mode === "prop" ? "из каждого акта удерживается та же доля, что аванс в договоре" : "из каждого акта удерживается заданный %") +
+      (p.offset.mode === "fixed" ? field(p, "Зачёт аванса, % от акта", "offset.pct", "pct", null, ed) : "") +
       calcField("Применяемый % зачёта", fmtPct(R.offsetPct)) + "</div></div>";
     h += '<div class="panel"><h3>Оплата актов и удержание</h3><div class="form">' +
-      field(p, "Гарантийное удержание, % от акта", "retention.pct", "pct", null, ed) + field(p, "Возврат удержания, мес. после завершения работ", "retention.returnLag", "int", null, ed) +
-      field(p, "Отсрочка оплаты актов заказчиком, мес.", "payLag", "int", null, ed) + "</div></div>";
+      field(p, "Гарантийное удержание, % от акта", "retention.pct", "pct", null, ed, "заказчик удерживает из оплаты каждого акта") +
+      field(p, "Возврат удержания, мес. после завершения работ", "retention.returnLag", "int", null, ed) +
+      field(p, "Отсрочка оплаты актов заказчиком, мес.", "payLag", "int", null, ed, "0 – оплата в месяце подписания акта") + "</div></div>";
     h += '<div class="panel"><h3>Накладные, амортизация, финансирование</h3><div class="form">' +
       field(p, "Накладные расходы компании, % от выручки", "overhead.pct", "pct", null, ed, "ставка накладных из утверждённого бюджета") +
-      field(p, "Доля накладных, облагаемых НДС", "overhead.vatShare", "pct", null, ed) + field(p, "Амортизация собственной техники за срок, тенге", "amort", "money", null, ed) +
-      field(p, "Источник покрытия кассового разрыва", "financingSource", "text", null, ed, "например: кредитная линия ForteBank, лимит …") + "</div></div>";
+      field(p, "Доля накладных, облагаемых НДС", "overhead.vatShare", "pct", null, ed, "часть накладных с входящим НДС") +
+      field(p, "Амортизация собственной техники за срок, тенге", "amort", "money", null, ed) +
+      field(p, "Источник покрытия кассового разрыва", "financingSource", "text", null, ed, "например: кредитная линия ForteBank, лимит … Не указан при разрыве – проект идёт через Бюджетный комитет") + "</div></div>";
     return h;
   }
 
   function tabSchedule(p, ed, R) {
-    var h = '<div class="panel"><div class="form">' + field(p, "Профиль графика выполнения", "schedule.profile", "select", PROF, ed) +
+    var profHint = { uniform: "одинаковая доля работ каждый месяц", scurve: "медленный старт и завершение, пик в середине срока", manual: "доли по месяцам вводятся вручную ниже" }[p.schedule.profile];
+    var h = '<div class="panel"><div class="form">' + field(p, "Профиль графика выполнения", "schedule.profile", "select", PROF, ed, profHint) +
       calcField("Месяц завершения работ", R.tc) + calcField("Сумма долей", fmtPct(R.shares.reduce(function (a, b) { return a + b; }, 0), 2)) + "</div>";
     if (p.schedule.profile === "manual") {
       h += '<h3 style="margin-top:14px">Доля выполнения по месяцам, %</h3><div class="grid36">';
-      for (var m = 0; m < E.N; m++) h += "<label>" + (m + 1) + " · " + calLabel(p, m + 1) + '<input data-path="schedule.manual.' + m + '" data-type="pct" value="' + (p.schedule.manual[m] * 100).toString().replace(".", ",") + '"' + (ed ? "" : " disabled") + "></label>";
+      for (var m = 0; m < E.N; m++) h += "<label>" + (m + 1) + " · " + calLabel(p, m + 1) + '<input data-path="schedule.manual.' + m + '" data-type="pct" inputmode="decimal" value="' + pctStr(p.schedule.manual[m]) + '"' + (ed ? "" : " disabled") + "></label>";
       h += "</div>";
     } else h += '<p class="muted small">Для ввода долей по месяцам выберите «Ручной график».</p>';
     h += '</div><div class="chart-box"><canvas id="chShares"></canvas></div>';
@@ -192,10 +329,16 @@
 
   function tabCosts(p, ed, R) {
     var Rp = E.calc(p, D.params, "pess");
-    var h = '<div class="panel" style="overflow-x:auto"><h3>Себестоимость (прямые затраты) и условия оплаты поставщикам</h3><table class="data"><tr><th>Статья</th><th class="num">% от выручки</th><th>НДС в цене</th><th class="num">Внутригрупп., %</th><th class="num">Аванс поставщику, %</th><th class="num">Аванс за, мес. до поставки</th><th class="num">Отсрочка остатка, мес.</th><th class="num">Валютная доля, %</th><th class="num">Сумма (базовый)</th><th class="num">Сумма (пессим.)</th></tr>';
+    function th(label, title) { return '<th class="num" title="' + esc(title) + '">' + label + ' <span class="q">?</span></th>'; }
+    var h = '<div class="panel" style="overflow-x:auto"><h3>Себестоимость (прямые затраты) и условия оплаты поставщикам</h3><table class="data"><tr><th>Статья</th>' +
+      th("% от выручки", "Доля статьи в выручке без НДС") + '<th title="Есть ли НДС в цене поставщика (входящий НДС к зачёту)">НДС в цене <span class="q">?</span></th>' +
+      th("Внутригрупп., %", "Доля закупок у компаний группы (справочно)") + th("Аванс поставщику, %", "Предоплата поставщику: 100% – полная предоплата, 0% – без аванса") +
+      th("Аванс за, мес. до поставки", "За сколько месяцев до поставки платится аванс") + th("Отсрочка остатка, мес.", "Через сколько месяцев после поставки оплачивается остаток") +
+      th("Валютная доля, %", "Часть закупки с ценой в иностранной валюте; зависит от курса в сценарии") +
+      '<th class="num">Сумма (базовый)</th><th class="num">Сумма (пессим.)</th></tr>';
     p.costs.forEach(function (c, i) {
       var d = ed ? "" : " disabled";
-      function inp(path, type) { var v = getPath(p, path); return '<input data-path="' + path + '" data-type="' + type + '" value="' + (type === "pct" ? (v * 100).toString().replace(".", ",") : v) + '"' + d + ">"; }
+      function inp(path, type) { var v = getPath(p, path); return '<input data-path="' + path + '" data-type="' + type + '" inputmode="decimal" value="' + (type === "pct" ? pctStr(v) : v) + '"' + d + ">"; }
       h += "<tr><td>" + esc(E.COST_NAMES[i]) + "</td><td>" + inp("costs." + i + ".pct", "pct") + '</td><td><select data-path="costs.' + i + '.vat" data-type="bool"' + d + '><option value="1"' + (c.vat ? " selected" : "") + '>Да</option><option value="0"' + (!c.vat ? " selected" : "") + ">Нет</option></select></td><td>" +
         inp("costs." + i + ".holding", "pct") + "</td><td>" + inp("costs." + i + ".prepay", "pct") + "</td><td>" + inp("costs." + i + ".lead", "int") + "</td><td>" + inp("costs." + i + ".lag", "int") + "</td><td>" + inp("costs." + i + ".fx", "pct") +
         '</td><td class="num">' + fmt(R.costs[i]) + '</td><td class="num">' + fmt(Rp.costs[i]) + "</td></tr>";
@@ -208,15 +351,19 @@
   function tabBg(p, ed, R) {
     var d = ed ? "" : " disabled";
     var h = '<div class="panel" style="overflow-x:auto"><h3>Банковские гарантии</h3><table class="data"><tr><th>Параметр</th>' + p.bg.map(function (g) { return "<th>" + BG_NAMES[g.type] + "</th>"; }).join("") + "</tr>";
-    function row(label, fn) { h += "<tr><td>" + label + "</td>" + p.bg.map(function (g, i) { return "<td>" + fn(g, i) + "</td>"; }).join("") + "</tr>"; }
+    // поля гарантии, которая не требуется, и неиспользуемый способ расчёта суммы скрыты прочерком
+    function row(label, fn, show) {
+      h += "<tr><td>" + label + "</td>" + p.bg.map(function (g, i) { return "<td>" + (!show || show(g) ? fn(g, i) : '<span class="na">—</span>') + "</td>"; }).join("") + "</tr>";
+    }
+    function req(g) { return g.req; }
     row("Требуется", function (g, i) { return '<select data-path="bg.' + i + '.req" data-type="bool"' + d + '><option value="1"' + (g.req ? " selected" : "") + '>Да</option><option value="0"' + (!g.req ? " selected" : "") + ">Нет</option></select>"; });
-    row("База расчёта", function (g, i) { return '<select data-path="bg.' + i + '.base" data-type="select"' + d + ">" + Object.keys(BG_BASE).map(function (k) { return '<option value="' + k + '"' + (g.base === k ? " selected" : "") + ">" + BG_BASE[k] + "</option>"; }).join("") + "</select>"; });
-    row("% от базы", function (g, i) { return '<input data-path="bg.' + i + '.pct" data-type="pct" value="' + (g.pct * 100).toString().replace(".", ",") + '"' + d + ">"; });
-    row("Сумма при ручном вводе, тенге", function (g, i) { return '<input data-path="bg.' + i + '.manual" data-type="money" value="' + fmt(g.manual) + '"' + d + ">"; });
-    row("Месяц выпуска (пусто – авто)", function (g, i) { return '<input data-path="bg.' + i + '.issue" data-type="intnull" placeholder="авто: ' + R.bg[i].issue + '" value="' + (g.issue === null ? "" : g.issue) + '"' + d + ">"; });
-    row("Срок, мес. (пусто – авто)", function (g, i) { return '<input data-path="bg.' + i + '.term" data-type="intnull" placeholder="авто: ' + R.bg[i].term + '" value="' + (g.term === null ? "" : g.term) + '"' + d + ">"; });
-    row("Комиссия банка, % годовых", function (g, i) { return '<input data-path="bg.' + i + '.rate" data-type="pct" value="' + (g.rate * 100).toString().replace(".", ",") + '"' + d + ">"; });
-    row("Денежное покрытие, % от суммы", function (g, i) { return '<input data-path="bg.' + i + '.cover" data-type="pct" value="' + (g.cover * 100).toString().replace(".", ",") + '"' + d + ">"; });
+    row("База расчёта", function (g, i) { return '<select data-path="bg.' + i + '.base" data-type="select"' + d + ">" + Object.keys(BG_BASE).map(function (k) { return '<option value="' + k + '"' + (g.base === k ? " selected" : "") + ">" + BG_BASE[k] + "</option>"; }).join("") + "</select>"; }, req);
+    row("% от базы", function (g, i) { return '<input data-path="bg.' + i + '.pct" data-type="pct" inputmode="decimal" value="' + pctStr(g.pct) + '"' + d + ">"; }, function (g) { return g.req && g.base !== "manual"; });
+    row("Сумма гарантии, тенге", function (g, i) { return '<input data-path="bg.' + i + '.manual" data-type="money" inputmode="decimal" value="' + fmt(g.manual) + '"' + d + ">"; }, function (g) { return g.req && g.base === "manual"; });
+    row("Месяц выпуска (пусто – авто)", function (g, i) { return '<input data-path="bg.' + i + '.issue" data-type="intnull" inputmode="decimal" placeholder="авто: ' + R.bg[i].issue + '" value="' + (g.issue === null ? "" : g.issue) + '"' + d + ">"; }, req);
+    row("Срок, мес. (пусто – авто)", function (g, i) { return '<input data-path="bg.' + i + '.term" data-type="intnull" inputmode="decimal" placeholder="авто: ' + R.bg[i].term + '" value="' + (g.term === null ? "" : g.term) + '"' + d + ">"; }, req);
+    row("Комиссия банка, % годовых", function (g, i) { return '<input data-path="bg.' + i + '.rate" data-type="pct" inputmode="decimal" value="' + pctStr(g.rate) + '"' + d + ">"; }, req);
+    row("Денежное покрытие, % от суммы", function (g, i) { return '<input data-path="bg.' + i + '.cover" data-type="pct" inputmode="decimal" value="' + pctStr(g.cover) + '"' + d + ">"; }, req);
     h += '<tr class="sub"><td>Сумма гарантии</td>' + R.bg.map(function (b) { return '<td class="num">' + fmt(b.amount) + "</td>"; }).join("") + "</tr>";
     h += '<tr class="sub"><td>Комиссия за срок</td>' + R.bg.map(function (b) { return '<td class="num">' + fmt(b.fee) + "</td>"; }).join("") + "</tr>";
     h += '<tr class="sub"><td>Денежное покрытие (блокируется)</td>' + R.bg.map(function (b) { return '<td class="num">' + fmt(b.cover) + "</td>"; }).join("") + "</tr></table>";
@@ -261,7 +408,7 @@
     rows.forEach(function (r) {
       var tot = r[0] === "НАКОПЛЕННЫЙ ОСТАТОК" ? r[1][E.N - 1] : r[1].reduce(function (a, b) { return a + b; }, 0);
       h += "<tr" + (r[2] ? ' class="sub"' : "") + "><td>" + r[0] + '</td><td class="num">' + fmt(tot) + "</td>";
-      for (m = 0; m < n; m++) h += '<td class="num"' + (r[0] === "НАКОПЛЕННЫЙ ОСТАТОК" && r[1][m] < 0 ? ' style="color:var(--red)"' : "") + ">" + fmt(r[1][m]) + "</td>";
+      for (m = 0; m < n; m++) h += '<td class="num' + (r[0] === "НАКОПЛЕННЫЙ ОСТАТОК" && r[1][m] < 0 ? " neg" : "") + '">' + fmt(r[1][m]) + "</td>";
       h += "</tr>";
     });
     return h + "</table></div>";
@@ -304,7 +451,7 @@
     if (cS) {
       var R = E.calc(p, D.params, "base"), n = Math.max(R.tc, 1), lab = [], dat = [];
       for (var m = 1; m <= Math.min(E.N, n + 2); m++) { lab.push(calLabel(p, m)); dat.push(+(R.shares[m - 1] * 100).toFixed(2)); }
-      charts.push(new Chart(cS, { type: "bar", data: { labels: lab, datasets: [{ label: "Доля выполнения, %", data: dat, backgroundColor: "#2C4A80" }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false } } } }));
+      charts.push(new Chart(cS, { type: "bar", data: { labels: lab, datasets: [{ label: "Доля выполнения, %", data: dat, backgroundColor: "#2B4F8F" }] }, options: { maintainAspectRatio: false, plugins: { legend: { display: false } } } }));
     }
     var cC = document.getElementById("chCum");
     if (cC) {
@@ -312,8 +459,8 @@
       for (var k = 1; k <= E.N; k++) lb.push(k);
       charts.push(new Chart(cC, {
         type: "line", data: { labels: lb, datasets: [
-          { label: "Накопленный остаток – базовый", data: b.monthly.cum.map(Math.round), borderColor: "#1F3864", pointRadius: 0, tension: .2 },
-          { label: "Накопленный остаток – " + SCEN[s.scenario].toLowerCase(), data: s.monthly.cum.map(Math.round), borderColor: "#C00000", borderDash: [5, 4], pointRadius: 0, tension: .2 }] },
+          { label: "Накопленный остаток – базовый", data: b.monthly.cum.map(Math.round), borderColor: "#1E3A6E", pointRadius: 0, tension: .2 },
+          { label: "Накопленный остаток – " + SCEN[s.scenario].toLowerCase(), data: s.monthly.cum.map(Math.round), borderColor: "#B42318", borderDash: [5, 4], pointRadius: 0, tension: .2 }] },
         options: { maintainAspectRatio: false, scales: { x: { title: { display: true, text: "месяц проекта" } }, y: { ticks: { callback: function (v) { return fmt(v / 1e6) + " млн"; } } } } }
       }));
     }
@@ -357,9 +504,9 @@
       }
       charts.push(new Chart(document.getElementById("chPort"), {
         data: { labels: MONTHS, datasets: [
-          { type: "bar", label: "Выручка без НДС", data: rev, backgroundColor: "#9DB4DA" },
-          { type: "bar", label: "Чистый поток проектов", data: net, backgroundColor: "#2A8C82" },
-          { type: "line", label: "Накопленный поток проектов", data: cum, borderColor: "#C8963E", pointRadius: 2 }] },
+          { type: "bar", label: "Выручка без НДС", data: rev, backgroundColor: "#B8C7E0" },
+          { type: "bar", label: "Чистый поток проектов", data: net, backgroundColor: "#1F7A70" },
+          { type: "line", label: "Накопленный поток проектов", data: cum, borderColor: "#B7822F", pointRadius: 2 }] },
         options: { maintainAspectRatio: false, scales: { y: { ticks: { callback: function (v) { return fmt(v / 1e6) + " млн"; } } } } }
       }));
     }
@@ -417,7 +564,7 @@
     [["Удорожание прямых затрат, %", "over", "pct"], ["Изменение курса валюты, %", "fx", "pct"], ["Доп. задержка оплаты актов, мес.", "delay", "int"]].forEach(function (r) {
       h += "<tr><td>" + r[0] + "</td>" + ["base", "pess", "opt"].map(function (k) {
         var v = P.scenarios[k][r[1]];
-        return '<td><input data-scope="params" data-path="scenarios.' + k + "." + r[1] + '" data-type="' + r[2] + '" value="' + (r[2] === "pct" ? (v * 100).toString().replace(".", ",") : v) + '"' + d + "></td>";
+        return '<td><input data-scope="params" data-path="scenarios.' + k + "." + r[1] + '" data-type="' + r[2] + '" inputmode="decimal" value="' + (r[2] === "pct" ? pctStr(v) : v) + '"' + d + "></td>";
       }).join("") + "</tr>";
     });
     h += "</table></div>";
@@ -438,12 +585,7 @@
     var cr = E.committeeRequired(p, D.params);
     if (t.noCommittee && cr.required) { toast("Нужно вынести на Бюджетный комитет"); return; }
     if (t.key === "submit") {
-      var miss = [];
-      if (!String(p.name).trim()) miss.push("наименование");
-      if (!String(p.customer || "").trim()) miss.push("заказчик");
-      if (!(p.contract > 0)) miss.push("сумма договора");
-      var sh = E.scheduleShares(p).reduce(function (a, b) { return a + b; }, 0);
-      if (Math.abs(sh - 1) > 0.0001) miss.push("сумма долей графика должна быть 100%");
+      var miss = submitChecks(p).filter(function (c) { return !c.ok; }).map(function (c) { return c.label.toLowerCase(); });
       if (miss.length) { toast("Заполните: " + miss.join(", ")); return; }
     }
     var needComment = ["peo_back", "fd_back", "bk_back", "bk_rej", "from_budget"].indexOf(t.key) >= 0;
@@ -469,7 +611,11 @@
     var el = e.target.closest("[data-open],[data-act],[data-tab],[data-tr]");
     if (!el) return;
     if (el.dataset.open) { S.id = el.dataset.open; S.view = "project"; S.tab = "contract"; render(); window.scrollTo(0, 0); return; }
-    if (el.dataset.tab) { S.tab = el.dataset.tab; render(); return; }
+    if (el.dataset.tab) {
+      S.tab = el.dataset.tab; render();
+      if (el.dataset.step) document.getElementById("tabs").scrollIntoView({ block: "start" });
+      return;
+    }
     var p = proj(S.id);
     if (el.dataset.tr && p) { doTransition(p, TRANSITIONS.filter(function (t) { return t.key === el.dataset.tr; })[0]); return; }
     switch (el.dataset.act) {
@@ -494,6 +640,7 @@
 
   // ------------------------------------------------------------ рендер
   function render() {
+    renderPending = false;
     destroyCharts();
     roleSel.value = S.role;
     Array.prototype.forEach.call(document.querySelectorAll("#nav button"), function (b) { b.classList.toggle("active", b.dataset.view === S.view || (S.view === "project" && b.dataset.view === "registry")); });
