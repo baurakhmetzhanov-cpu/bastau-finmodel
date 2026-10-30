@@ -91,12 +91,23 @@
     }[S.role] || "";
     return "Данные вводит руководитель проекта (" + p.owner + ") в статусах «Черновик» и «На доработке». " + tail;
   }
+  function onResultTab() { return TABS.map(function (t) { return t[0]; }).indexOf(S.tab) >= N_INPUT_TABS; }
+  // Режим ввода – три шага: ввод данных, проверка результата, отправка в ПЭО.
+  // Кнопка отправки появляется только на вкладках результатов.
   function modeBanner(p, ed) {
     if (!ed) return '<div class="mode view"><b>Только просмотр</b><div>' + esc(lockReason(p)) + "</div></div>";
-    var ch = submitChecks(p), left = ch.some(function (c) { return !c.ok; });
-    return '<div class="mode edit"><b>Режим ввода</b><div>Заполните вкладки 1–4 по порядку, показатели пересчитываются сразу. ' +
-      (left ? "Для отправки на проверку ПЭО осталось заполнить:" : "Обязательное заполнено – можно отправлять на проверку ПЭО.") +
-      '<div class="checks">' + ch.map(function (c) { return '<span class="check ' + (c.ok ? "ok" : "no") + '" data-tab="' + c.tab + '">' + esc(c.label) + "</span>"; }).join("") + "</div></div></div>";
+    var ch = submitChecks(p), left = ch.some(function (c) { return !c.ok; }), res = onResultTab();
+    var send = !res ? "<span>станет доступна после проверки результата</span>"
+      : left ? '<span class="neg">сначала заполните обязательные поля на шаге 1</span>'
+      : '<span>результат проверен – можно отправлять</span><button class="btn primary sm" data-tr="submit">Отправить на проверку ПЭО</button>';
+    return '<div class="flow">' +
+      '<div class="flow-step ' + (res ? (left ? "warn" : "done") : "active") + '" data-tab="contract"><i>1</i><div><b>Ввод данных</b><span>вкладки 1–4, показатели пересчитываются сразу</span>' +
+      '<div class="checks">' + ch.map(function (c) { return '<span class="check ' + (c.ok ? "ok" : "no") + '" data-tab="' + c.tab + '">' + esc(c.label) + "</span>"; }).join("") + "</div></div></div>" +
+      '<div class="flow-arrow">→</div>' +
+      '<div class="flow-step' + (res ? " active" : "") + '" data-tab="result"><i>2</i><div><b>Проверка результата</b><span>вкладки 5–8: рентабельность, денежный поток, сценарии</span>' +
+      (res ? "" : '<em>Перейти к результату →</em>') + "</div></div>" +
+      '<div class="flow-arrow">→</div>' +
+      '<div class="flow-step' + (res && !left ? " ready" : " locked") + '"><i>3</i><div><b>Отправка на проверку ПЭО</b>' + send + "</div></div></div>";
   }
 
   // ------------------------------------------------------------ модальное окно
@@ -235,6 +246,7 @@
     var acts = TRANSITIONS.filter(function (t) { return t.role === S.role && t.from.indexOf(p.status) >= 0 && (!t.owner || p.owner === S.user); });
     html += '<div class="toolbar">';
     acts.forEach(function (t) {
+      if (t.key === "submit") return; // отправка на проверку – в шаге 3 режима ввода
       var dis = t.noCommittee && cr.required;
       html += '<button class="btn ' + t.cls + '" data-tr="' + t.key + '"' + (dis ? ' disabled title="Нужен Бюджетный комитет"' : "") + ">" + esc(t.label) + "</button>";
     });
@@ -249,7 +261,7 @@
     function tabBtn(t) {
       return '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? "active" : "") + '">' + t[1] + (miss[t[0]] ? '<i class="dot" title="Не заполнены обязательные поля"></i>' : "") + "</button>";
     }
-    var withSum = TABS.map(function (t) { return t[0]; }).indexOf(S.tab) < N_INPUT_TABS;
+    var withSum = !onResultTab();
     html += '<div class="card-layout' + (withSum ? " with-sum" : "") + '"><div class="card-main">';
     html += '<div class="tabs" id="tabs"><div class="tab-group"><span class="tg-label">' + (ed ? "Ввод данных" : "Исходные данные") + '</span><div class="tg-btns">' + TABS.slice(0, N_INPUT_TABS).map(tabBtn).join("") +
       '</div></div><div class="tab-group out"><span class="tg-label">Результаты</span><div class="tg-btns">' + TABS.slice(N_INPUT_TABS).map(tabBtn).join("") + "</div></div></div>";

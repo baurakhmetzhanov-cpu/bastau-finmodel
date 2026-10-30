@@ -120,8 +120,26 @@ table.data td.empty { color: var(--muted); padding: 28px 12px; text-align: cente
 /* ---------- карточка проекта */
 .mode { display: flex; gap: 14px; align-items: flex-start; border: 1px solid; border-radius: var(--radius); padding: 12px 16px; margin: 8px 0; font-size: 13px; }
 .mode > b { white-space: nowrap; padding: 3px 9px; border-radius: 6px; font-size: 12px; font-weight: 650; }
-.mode.edit { background: var(--greenbg); border-color: #BFE0CC; color: #1C4D34; }
-.mode.edit > b { background: var(--green); color: #fff; }
+.flow { display: grid; grid-template-columns: minmax(0, 1.3fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; margin: 10px 0 8px; }
+.flow-step { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font-size: 12.5px; box-shadow: var(--shadow); }
+.flow-step[data-tab] { cursor: pointer; }
+.flow-step[data-tab]:hover { border-color: var(--line-2); }
+.flow-step > i { font-style: normal; flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; background: var(--brand-soft); color: var(--brand); }
+.flow-step b { display: block; font-size: 13.5px; font-weight: 650; color: var(--ink); margin-bottom: 1px; }
+.flow-step span { color: var(--muted); }
+.flow-step span.neg { color: var(--red); font-weight: 600; }
+.flow-step em { display: block; font-style: normal; font-weight: 600; color: var(--brand-2); margin-top: 4px; }
+.flow-step .btn { margin-top: 8px; }
+.flow-step.active { border-color: var(--brand-2); box-shadow: 0 0 0 3px var(--focus); }
+.flow-step.active > i { background: var(--brand); color: #fff; }
+.flow-step.done > i, .flow-step.ready > i { background: var(--green); color: #fff; }
+.flow-step.done > i { font-size: 0; }
+.flow-step.done > i::after { content: "✓"; font-size: 13px; }
+.flow-step.warn > i { background: var(--red); color: #fff; }
+.flow-step.ready { border-color: #BFE0CC; background: var(--greenbg); }
+.flow-step.locked { background: var(--surface-2); box-shadow: none; }
+.flow-step.locked b { color: var(--muted); }
+.flow-arrow { align-self: center; color: var(--faint); font-size: 16px; }
 .mode.view { background: var(--surface); border-color: var(--line); color: #3F4A5C; }
 .mode.view > b { background: #5F6B7D; color: #fff; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 6px; }
@@ -226,6 +244,8 @@ td input, .grid36 input { text-align: right; }
   .tab-group.out { border-left: 0; padding-left: 0; }
   .form { grid-template-columns: 1fr; }
   .mode { flex-direction: column; gap: 8px; }
+  .flow { grid-template-columns: 1fr; }
+  .flow-arrow { display: none; }
 }
 </style>
 </head>
@@ -812,12 +832,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }[S.role] || "";
     return "Данные вводит руководитель проекта (" + p.owner + ") в статусах «Черновик» и «На доработке». " + tail;
   }
+  function onResultTab() { return TABS.map(function (t) { return t[0]; }).indexOf(S.tab) >= N_INPUT_TABS; }
+  // Режим ввода – три шага: ввод данных, проверка результата, отправка в ПЭО.
+  // Кнопка отправки появляется только на вкладках результатов.
   function modeBanner(p, ed) {
     if (!ed) return '<div class="mode view"><b>Только просмотр</b><div>' + esc(lockReason(p)) + "</div></div>";
-    var ch = submitChecks(p), left = ch.some(function (c) { return !c.ok; });
-    return '<div class="mode edit"><b>Режим ввода</b><div>Заполните вкладки 1–4 по порядку, показатели пересчитываются сразу. ' +
-      (left ? "Для отправки на проверку ПЭО осталось заполнить:" : "Обязательное заполнено – можно отправлять на проверку ПЭО.") +
-      '<div class="checks">' + ch.map(function (c) { return '<span class="check ' + (c.ok ? "ok" : "no") + '" data-tab="' + c.tab + '">' + esc(c.label) + "</span>"; }).join("") + "</div></div></div>";
+    var ch = submitChecks(p), left = ch.some(function (c) { return !c.ok; }), res = onResultTab();
+    var send = !res ? "<span>станет доступна после проверки результата</span>"
+      : left ? '<span class="neg">сначала заполните обязательные поля на шаге 1</span>'
+      : '<span>результат проверен – можно отправлять</span><button class="btn primary sm" data-tr="submit">Отправить на проверку ПЭО</button>';
+    return '<div class="flow">' +
+      '<div class="flow-step ' + (res ? (left ? "warn" : "done") : "active") + '" data-tab="contract"><i>1</i><div><b>Ввод данных</b><span>вкладки 1–4, показатели пересчитываются сразу</span>' +
+      '<div class="checks">' + ch.map(function (c) { return '<span class="check ' + (c.ok ? "ok" : "no") + '" data-tab="' + c.tab + '">' + esc(c.label) + "</span>"; }).join("") + "</div></div></div>" +
+      '<div class="flow-arrow">→</div>' +
+      '<div class="flow-step' + (res ? " active" : "") + '" data-tab="result"><i>2</i><div><b>Проверка результата</b><span>вкладки 5–8: рентабельность, денежный поток, сценарии</span>' +
+      (res ? "" : '<em>Перейти к результату →</em>') + "</div></div>" +
+      '<div class="flow-arrow">→</div>' +
+      '<div class="flow-step' + (res && !left ? " ready" : " locked") + '"><i>3</i><div><b>Отправка на проверку ПЭО</b>' + send + "</div></div></div>";
   }
 
   // ------------------------------------------------------------ модальное окно
@@ -956,6 +987,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var acts = TRANSITIONS.filter(function (t) { return t.role === S.role && t.from.indexOf(p.status) >= 0 && (!t.owner || p.owner === S.user); });
     html += '<div class="toolbar">';
     acts.forEach(function (t) {
+      if (t.key === "submit") return; // отправка на проверку – в шаге 3 режима ввода
       var dis = t.noCommittee && cr.required;
       html += '<button class="btn ' + t.cls + '" data-tr="' + t.key + '"' + (dis ? ' disabled title="Нужен Бюджетный комитет"' : "") + ">" + esc(t.label) + "</button>";
     });
@@ -970,7 +1002,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     function tabBtn(t) {
       return '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? "active" : "") + '">' + t[1] + (miss[t[0]] ? '<i class="dot" title="Не заполнены обязательные поля"></i>' : "") + "</button>";
     }
-    var withSum = TABS.map(function (t) { return t[0]; }).indexOf(S.tab) < N_INPUT_TABS;
+    var withSum = !onResultTab();
     html += '<div class="card-layout' + (withSum ? " with-sum" : "") + '"><div class="card-main">';
     html += '<div class="tabs" id="tabs"><div class="tab-group"><span class="tg-label">' + (ed ? "Ввод данных" : "Исходные данные") + '</span><div class="tg-btns">' + TABS.slice(0, N_INPUT_TABS).map(tabBtn).join("") +
       '</div></div><div class="tab-group out"><span class="tg-label">Результаты</span><div class="tg-btns">' + TABS.slice(N_INPUT_TABS).map(tabBtn).join("") + "</div></div></div>";
