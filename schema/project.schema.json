@@ -9,7 +9,8 @@
     "id": { "type": "string", "description": "Идентификатор проекта; в СЭД – код проекта / ЦФО из справочника" },
     "name": { "type": "string", "minLength": 1 },
     "customer": { "type": "string", "description": "Заказчик; в СЭД – ссылка на контрагента (БИН)" },
-    "contractNo": { "type": "string" },
+    "tenderUrl": { "type": "string", "description": "Ссылка на тендер или номер лота; необязательно" },
+    "contractNo": { "type": "string", "description": "№ и дата договора; необязательно, заполняется после подписания; ключ сверки с 1С (ТЗ, п. 10.1)" },
     "owner": { "type": "string", "description": "Руководитель проекта; в СЭД – идентификатор пользователя" },
     "status": { "enum": ["draft", "review", "rework", "fd", "bk", "approved", "budget", "rejected"] },
     "version": { "type": "integer", "minimum": 1 },
@@ -91,6 +92,20 @@
       }
     },
     "financingSource": { "type": "string", "description": "Источник покрытия кассового разрыва" },
+    "gapPlan": {
+      "type": "array",
+      "description": "Предложения руководителя проекта по сокращению кассового разрыва; справочно, в расчёте не участвуют",
+      "items": {
+        "type": "object",
+        "required": ["measure", "amount"],
+        "properties": {
+          "measure": { "enum": ["credit", "advance", "suppliers", "own", "other"], "description": "credit – кредитная линия / овердрафт; advance – увеличение аванса; suppliers – отсрочка поставщикам; own – собственные средства; other – другое" },
+          "amount": { "type": "number", "minimum": 0 },
+          "month": { "type": "integer", "minimum": 1, "maximum": 36, "description": "Месяц проекта" },
+          "comment": { "type": "string" }
+        }
+      }
+    },
     "approved": {
       "type": ["object", "null"],
       "properties": { "version": { "type": "integer" }, "ts": { "type": "string" }, "netMargin": { "type": "number" }, "need": { "type": "number" } }

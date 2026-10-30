@@ -206,6 +206,15 @@ td input, .grid36 input { text-align: right; }
 .scroll table.data th:first-child, .scroll table.data td:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 260px; box-shadow: 1px 0 0 var(--line); }
 .scroll table.data th:first-child, .scroll table.data tr.sub td:first-child { background: var(--surface-2); z-index: 2; }
 .chart-box { position: relative; height: 300px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; box-shadow: var(--shadow); }
+.chart-box.tall { height: 340px; }
+.panel .chart-box { height: 220px; margin: 18px 0 0; box-shadow: none; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.panel-head h3 { margin: 0; display: flex; align-items: center; gap: 10px; }
+td input[data-type="text"] { text-align: left; }
+table.gap-plan td:first-child { min-width: 230px; }
+table.gap-plan td:nth-child(2) { width: 170px; }
+table.gap-plan td:nth-child(3) { min-width: 170px; }
+table.gap-plan td:nth-child(4) { min-width: 200px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .hist { list-style: none; padding: 0; margin: 0; }
 .hist li { position: relative; border-left: 2px solid var(--line-2); padding: 2px 0 14px 18px; margin-left: 6px; }
